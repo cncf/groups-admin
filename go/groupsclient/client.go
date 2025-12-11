@@ -694,6 +694,42 @@ func (c *GroupsClient) GrantOwnerPermsToGroupMember(newOwner MemberInfo, targetG
 	return groupsUpdated, err
 }
 
+// RemoveGroupMember removes the member, memberId from the group, groupID.
+// Returns
+// nil, Error if the parameters are invalid
+// MemberInfo, nil if the member was remove from the group
+// https://groups.io/api#remove-member
+func (c *GroupsClient) RemoveGroupMember(groupId int, memberId int) (MemberInfo, error) {
+	mbr := MemberInfo{}
+	formData := url.Values{}
+	formData.Set("group_id", strconv.Itoa(groupId))
+	formData.Set("member_info_id", strconv.Itoa(memberId))
+	formData.Set("extra", "true")
+	reqBody := strings.NewReader(formData.Encode())
+	resp, reqErr := c.doRequest("POST", "/api/v1/removemember", reqBody)
+	if reqErr != nil {
+		return mbr, Errorf("RemoveGroupMember: request failed endpoint %s, formData %v: %w", "/api/v1/removemember", formData, reqErr)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		errRespBody, _ := io.ReadAll(resp.Body)
+		return mbr, Errorf("RemoveGroupMember: non-200 status %d, endpoint %s, formData %v, responseBody: %s",
+			resp.StatusCode, "/api/v1/removemember", formData, errRespBody)
+	}
+
+	response, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return mbr, readErr
+	}
+
+	if unmErr := json.Unmarshal(response, &mbr); unmErr != nil {
+		return mbr, unmErr
+	}
+
+	return mbr, nil
+}
+
 // UpdateGroupMember updates field to value for memberId on groupID, returns an err if this fails to happen
 func (c *GroupsClient) UpdateGroupMember(groupId int, memberId int, field string, value string) (MemberInfo, error) {
 	mbr := MemberInfo{}
@@ -806,4 +842,36 @@ func (c *GroupsClient) GetPendingMsgList() ([]PendingMsg, int, error) {
 	}
 
 	return allPendingMsgs, count, nil
+}
+
+// RemoveFromGroups removes member from the array of targetGroups
+// Returns the number of groups successfully updated, the group names removed from, and an aggregated error (if any)
+func (c *GroupsClient) RemoveFromGroups(member MemberInfo, targetGroups []MemberInfo) (int, []string, error) {
+	var groupsUpdated int
+	var removedGroups []string
+	var errs []string
+
+	for _, group := range targetGroups {
+		thisGroupsMemberId, gmiError := c.GetMemberId(group.GroupID, member.UserID)
+		if gmiError != nil {
+			continue
+		}
+
+		m, rgmError := c.RemoveGroupMember(group.GroupID, thisGroupsMemberId)
+		if rgmError != nil {
+			msg := Sprintf("group %s (%d): remove failed: %v", group.GroupName, group.GroupID, rgmError)
+			log.Printf("WARN %s", msg)
+			errs = append(errs, msg)
+			continue
+		}
+
+		groupsUpdated++
+		removedGroups = append(removedGroups, group.GroupName)
+		log.Printf("INFO Member %s removed from group %s", m.FullName, group.GroupName)
+	}
+
+	if len(errs) > 0 {
+		return groupsUpdated, removedGroups, Errorf("RemoveFromGroups encountered issues: %s", strings.Join(errs, "; "))
+	}
+	return groupsUpdated, removedGroups, nil
 }
