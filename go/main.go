@@ -28,7 +28,7 @@ func main() {
 	emailPtr := flag.String("srcEmail", "", "groups.io email of the source user")
 	passwordPtr := flag.String("srcPass", "", "groups.io password of the source user")
 	listFilterPtr := flag.String("filter", "", "RegEx to filter the lists of subscriptions that the command will work on")
-	cmdPtr := flag.String("cmd", "view", "Can be one of: srcUserSubs, getUser, xferSubs, members, or pendMsgs")
+	cmdPtr := flag.String("cmd", "members", "Can be one of: srcUserSubs, getUser, xferSubs, members, removeMember, or pendMsgs")
 	destEmailPtr := flag.String("destEmail", "", "email of user who will acquire your subscriptions and permissions on groups.io")
 
 	flag.Parse()
@@ -47,8 +47,7 @@ func main() {
 		fmt.Printf("main: Error getting user ID for %s: %v\n", *emailPtr, err)
 		return
 	}
-	fmt.Printf("userId of loggedInUser: %v\n", srcUser.ID)
-	fmt.Printf("FullName of loggedInUser: %v\n", srcUser.FullName)
+	fmt.Printf("loggedInUser: %v-%v \n", srcUser.ID, srcUser.FullName)
 	switch *cmdPtr {
 	case "members":
 		// Get the list of members where the existing user has Owner permissions
@@ -142,6 +141,38 @@ func main() {
 		for i, pendingMessage := range pendingMessages {
 			fmt.Printf("pendMsgs: %d, from: %+v, subject: %s\n", i, pendingMessage.Sender, pendingMessage.Subject)
 		}
+	case "removeMember":
+		srcUsersSubs, subscriptionCount, err := client.GetMemberInfoList()
+
+		if err != nil {
+			fmt.Printf("main: xferSubs: Error getting user groups for %s: %v\n", srcUser.FullName, err)
+			return
+		}
+
+		if subscriptionCount == 0 {
+			fmt.Printf("main: xferSubs: %s is not subscribed to any groups!\n", *emailPtr)
+			return
+		}
+		targetUser, err := client.SearchMemberDetails(*destEmailPtr)
+		if err != nil {
+			fmt.Printf("main: xferSubs: Error running %s: %v\n", *cmdPtr, err)
+			return
+		}
+		if *listFilterPtr != "" {
+			fmt.Printf("main: xferSubs: Getting user groups for %s: filtered by %s\n", srcUser.FullName, *listFilterPtr)
+			_, filteredList := filterSrcUserSubs(*listFilterPtr, srcUsersSubs)
+			removedCount, removedGroups, err := client.RemoveFromGroups(*targetUser, filteredList)
+			if err != nil {
+				fmt.Printf("main: removeMember: partial failure removing %s: %v\n", targetUser.FullName, err)
+			}
+			fmt.Printf("main: removeMember: %s removed from %d groups (filtered): %s\n", *targetUser, removedCount, strings.Join(removedGroups, ", "))
+		} else {
+			removedCount, removedGroups, err := client.RemoveFromGroups(*targetUser, srcUsersSubs)
+			if err != nil {
+				fmt.Printf("main: removeMember: partial failure removing %s: %v\n", targetUser.FullName, err)
+			}
+			fmt.Printf("main: removeMember: %s removed from %d groups: %s\n", *targetUser, removedCount, strings.Join(removedGroups, ", "))
+		}
 	default:
 		fmt.Printf("main.go: unknown sub command %s\n", *cmdPtr)
 	}
@@ -159,20 +190,25 @@ func membershipReport(subs []groupsclient.MemberInfo, client *groupsclient.Group
 	defer writer.Flush()
 
 	for _, sub := range subs {
-		members, err := client.GetMembers(sub.GroupID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting membership list for %s. Error: %v\n", sub.GroupName, err)
-			continue
-		}
-		for _, member := range members {
-			fullName := member.FullName
-			if fullName == "" {
-				fullName = "name missing"
+		fmt.Fprintf(os.Stderr, "%s - %+v\n", sub.GroupName, sub.Perms)
+		if sub.Perms.ManageMembers != true {
+			fmt.Fprintf(os.Stderr, "%s - you are subscribed but have no ManageMember permission", sub.GroupName)
+		} else {
+			members, err := client.GetMembers(sub.GroupID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error getting membership list for %s. Error: %v\n", sub.GroupName, err)
+				continue
 			}
-			// Write pipe-separated line to file
-			line := fmt.Sprintf("%s | %s | %s\n", sub.NiceGroupName, fullName, member.Email)
-			if _, err := writer.WriteString(line); err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to write member line for %s: %v\n", member.Email, err)
+			for _, member := range members {
+				fullName := member.FullName
+				if fullName == "" {
+					fullName = "name missing"
+				}
+				// Write pipe-separated line to file
+				line := fmt.Sprintf("%s | %s | %s\n", sub.NiceGroupName, fullName, member.Email)
+				if _, err := writer.WriteString(line); err != nil {
+					fmt.Fprintf(os.Stderr, "Failed to write member line for %s: %v\n", member.Email, err)
+				}
 			}
 		}
 	}

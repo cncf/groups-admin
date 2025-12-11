@@ -32,12 +32,13 @@ make help
 - `getUser`: Lookup a user by `--destEmail` and print details.
 - `xferSubs`: Grant Owner permissions in your groups to `--destEmail` (optionally filter with `--filter`).
 - `pendMsgs`: List pending messages for moderation on the main group.
+- `remove-member`: Remove a member from all your groups (optionally filtered by `--filter` regex).
 
 ## Flags
 - `--baseUrl`: Base URL of your groups.io instance (e.g., `https://groups.io`).
 - `--srcEmail`, `--srcPass`: Credentials of the source (authenticated) user.
 - `--cmd`: One of `srcUserSubs|getUser|xferSubs|members|pendMsgs`.
-- `--destEmail`: Target user email for `getUser`/`xferSubs`.
+- `--destEmail`: Target user email for `getUser`/`xferSubs`/`removeMember`.
 - `--filter`: Regular expression to select groups (e.g., `'k8s-.*'`).
 
 ## Examples
